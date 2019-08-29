@@ -99,18 +99,3 @@ class UnaryPreprocessor(BasePreprocessor):
             raise NotImplementedError
         else:
             raise NotImplementedError
-
-
-class RawChunkPreprocessor(BasePreprocessor):
-    
-    @staticmethod
-    def _parse_chunk(chunk: 'gnes_pb2.Chunk', *args, **kwargs):
-        raise NotImplementedError
-
-    def apply(self, doc: 'gnes_pb2.Document') -> None:
-        if doc.raw_bytes:
-            for chunk in doc.chunks:
-                chunk.raw = self._parse_chunk(chunk)
-        else:
-            self.logger.error('bad document: "raw_bytes" is empty!')
-

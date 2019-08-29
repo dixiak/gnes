@@ -18,7 +18,7 @@ from typing import List
 
 import numpy as np
 
-from ..base import BaseVideoPreprocessor, RawChunkPreprocessor
+from ..base import BaseVideoPreprocessor
 from ..helper import split_video_frames, phash_descriptor
 from ...proto import gnes_pb2, array2blob, blob2array
 from ..io_utils import video as video_util
@@ -182,11 +182,3 @@ class FFmpegVideoSegmentor(BaseVideoPreprocessor):
                 self.logger.info('bad document: no key frames extracted')
         else:
             self.logger.error('bad document: "raw_bytes" is empty!')
-
-
-class GifChunkPreprocessor(RawChunkPreprocessor, BaseVideoPreprocessor):
-    @staticmethod
-    def _parse_chunk(chunk: 'gnes_pb2.Chunk', *args, **kwargs):
-        from ..io_utils import gif as gif_util
-
-        return gif_util.encode_gif(blob2array(chunk.blob), fps=10)
