@@ -82,7 +82,7 @@ class mock_call():
     def mock_encode_call(self, input_list):
 
         msg = self._fake_encode_msg(input_list)
-        self.client.send_message(msg)
+        self.cli ent.send_message(msg)
         r = self.client.recv_message(timeout=-1)
         embeds = []
         for d in r.request.index.docs:
