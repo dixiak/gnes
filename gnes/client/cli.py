@@ -22,36 +22,46 @@ from typing import List
 
 from termcolor import colored
 
-from ..proto import RequestGenerator
-from .grpc import StreamingClient
+from .base import GrpcClient
+from ..proto import RequestGenerator, gnes_pb2
 
 
-class CLIClient(StreamingClient):
+class CLIClient(GrpcClient):
     def __init__(self, args):
         super().__init__(args)
-        self.start()
-        getattr(self, self.args.mode)(all_bytes)
-        self.stop()
+        getattr(self, self.args.mode)(self.read_all())
+        self.close()
 
-    def train(self, all_bytes: List[bytes], stub):
+    def train(self, all_bytes: List[bytes]):
         with ProgressBar(all_bytes, self.args.batch_size, task_name=self.args.mode) as p_bar:
-            for req in RequestGenerator.train(all_bytes, doc_id_start=self.args.start_doc_id, batch_size=self.args.batch_size):
-                self.send_request(req)
+            for _ in self._stub.StreamCall(RequestGenerator.train(all_bytes,
+                                                                  doc_id_start=self.args.start_doc_id,
+                                                                  batch_size=self.args.batch_size)):
                 p_bar.update()
 
-    def index(self, all_bytes: List[bytes], stub):
+    def index(self, all_bytes: List[bytes]):
         with ProgressBar(all_bytes, self.args.batch_size, task_name=self.args.mode) as p_bar:
-            for req in RequestGenerator.index(all_bytes, doc_id_start=self.args.start_doc_id, batch_size=self.args.batch_size):
-                self.send_request(req)
+            for _ in self._stub.StreamCall(RequestGenerator.index(all_bytes,
+                                                                  doc_id_start=self.args.start_doc_id,
+                                                                  batch_size=self.args.batch_size)):
                 p_bar.update()
 
-    def query(self, all_bytes: List[bytes], stub):
+    def query(self, all_bytes: List[bytes]):
         for idx, q in enumerate(all_bytes):
             for req in RequestGenerator.query(q, request_id_start=idx, top_k=self.args.top_k):
                 resp = self._stub.Call(req)
-                print(resp)
-                print('query %d result: %s' % (idx, resp))
-                input('press any key to continue...')
+                self.query_callback(req, resp)
+
+    def query_callback(self, req: 'gnes_pb2.Request', resp: 'gnes_pb2.Response'):
+        """
+        callback after get the query result
+        override this method to customize query behavior
+        :param resp: response
+        :param req: query
+        :return:
+        """
+        print(req)
+        print(resp)
 
     def read_all(self) -> List[bytes]:
         if self.args.txt_file:

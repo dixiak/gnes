@@ -36,6 +36,10 @@ class BaseScoreFn(TrainableBase):
 
     warn_unnamed = False
 
+    def __init__(self, context=None, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._context = context
+
     def __call__(self, *args, **kwargs) -> 'gnes_pb2.Response.QueryResponse.ScoredResult.Score':
         raise NotImplementedError
 
@@ -75,7 +79,7 @@ class CombinedScoreFn(BaseScoreFn):
     def post_init(self):
         self.op = self.supported_ops[self.score_mode]
 
-    def __call__(self, *last_scores) -> 'gnes_pb2.Response.QueryResponse.ScoredResult.Score':
+    def __call__(self, *last_scores, **kwargs) -> 'gnes_pb2.Response.QueryResponse.ScoredResult.Score':
         return self.new_score(
             value=self.op([s.value for s in last_scores]),
             operands=last_scores,
@@ -87,8 +91,8 @@ class ModifierScoreFn(BaseScoreFn):
     score = modifier(factor * value)
     """
 
-    def __init__(self, modifier: str = 'none', factor: float = 1.0, factor_name: str = 'GivenConstant', *args,
-                 **kwargs):
+    def __init__(self, modifier: str = 'none', factor: float = 1.0, factor_name: str = 'GivenConstant',
+                 *args, **kwargs):
         super().__init__(*args, **kwargs)
         if modifier not in self.supported_ops:
             raise AttributeError(

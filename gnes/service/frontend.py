@@ -19,9 +19,10 @@ from concurrent.futures import ThreadPoolExecutor
 
 import grpc
 
+from .. import __version__, __proto_version__
 from ..client.base import ZmqClient
 from ..helper import set_logger
-from ..proto import gnes_pb2_grpc, gnes_pb2, router2str
+from ..proto import gnes_pb2_grpc, gnes_pb2, router2str, add_route
 
 
 class FrontendService:
@@ -30,8 +31,8 @@ class FrontendService:
         self.logger = set_logger(self.__class__.__name__, args.verbose)
         self.server = grpc.server(
             ThreadPoolExecutor(max_workers=args.max_concurrency),
-            options=[('grpc.max_send_message_length', args.max_message_size * 1024 * 1024),
-                     ('grpc.max_receive_message_length', args.max_message_size * 1024 * 1024)])
+            options=[('grpc.max_send_message_length', args.max_message_size),
+                     ('grpc.max_receive_message_length', args.max_message_size)])
         self.logger.info('start a frontend with %d workers' % args.max_concurrency)
         gnes_pb2_grpc.add_GnesRPCServicer_to_server(self._Servicer(args), self.server)
 
@@ -56,7 +57,7 @@ class FrontendService:
 
         def add_envelope(self, body: 'gnes_pb2.Request', zmq_client: 'ZmqClient'):
             msg = gnes_pb2.Message()
-            msg.envelope.client_id = zmq_client.identity if zmq_client.identity else ''
+            msg.envelope.client_id = zmq_client.args.identity
             if body.request_id is not None:
                 msg.envelope.request_id = body.request_id
             else:
@@ -66,17 +67,59 @@ class FrontendService:
             msg.envelope.part_id = 1
             msg.envelope.num_part.append(1)
             msg.envelope.timeout = 5000
-            r = msg.envelope.routes.add()
-            r.service = FrontendService.__name__
-            r.timestamp.GetCurrentTime()
+            msg.envelope.gnes_version = __version__
+            msg.envelope.proto_version = __proto_version__
+            add_route(msg.envelope, FrontendService.__name__, self.args.identity)
             msg.request.CopyFrom(body)
             return msg
 
         def remove_envelope(self, m: 'gnes_pb2.Message'):
             resp = m.response
             resp.request_id = m.envelope.request_id
-            self.logger.info('unpacking a message and return to client: %s' % router2str(m))
+            m.envelope.routes[0].end_time.GetCurrentTime()
+            if self.args.route_table:
+                self.logger.info('route: %s' % router2str(m))
+                route_time = []
+                k = m.envelope.routes[0]
+                total_duration = self.get_duration(k.start_time, k.end_time)
+
+                sum_duration = 0
+                for k in m.envelope.routes[1:]:
+                    if k.first_start_time and k.last_end_time:
+                        d = self.get_duration(k.first_start_time, k.last_end_time)
+                    else:
+                        d = self.get_duration(k.start_time, k.end_time)
+
+                    route_time.append((k.service, d))
+                    sum_duration += d
+
+                def get_table_str(time_table):
+                    return '\n'.join(
+                        ['%40s\t%3.3fs\t%3d%%' % (k[0], k[1], k[1] / total_duration * 100) for k in
+                         sorted(time_table, key=lambda x: x[1], reverse=True)])
+
+                summary = [('system', total_duration - sum_duration),
+                           ('total', total_duration),
+                           ('job', sum_duration)]
+
+                route_table = ('\n%s\n' % ('-' * 80)).join(
+                    ['%40s\t%-6s\t%3s' % ('Breakdown', 'Time', 'Percent'), get_table_str(route_time),
+                     get_table_str(summary)])
+                self.logger.info('route table: \n%s' % route_table)
+
             return resp
+
+        @staticmethod
+        def get_duration(start_time, end_time):
+            d_s = end_time.seconds - start_time.seconds
+            d_n = end_time.nanos - start_time.nanos
+            if d_s < 0 and d_n > 0:
+                d_s = max(d_s + 1, 0)
+                d_n = max(d_n - 1e9, 0)
+            elif d_s > 0 and d_n < 0:
+                d_s = max(d_s - 1, 0)
+                d_n = max(d_n + 1e9, 0)
+            return max(d_s + d_n / 1e9, 0)
 
         def Call(self, request, context):
             with self.zmq_context as zmq_client:
@@ -94,8 +137,12 @@ class FrontendService:
 
         def StreamCall(self, request_iterator, context):
             with self.zmq_context as zmq_client:
+                num_request = 0
                 for request in request_iterator:
                     zmq_client.send_message(self.add_envelope(request, zmq_client), self.args.timeout)
+                    num_request += 1
+
+                for _ in range(num_request):
                     msg = zmq_client.recv_message(self.args.timeout)
                     yield self.remove_envelope(msg)
 
